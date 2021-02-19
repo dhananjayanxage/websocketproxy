@@ -1,4 +1,4 @@
-module websocketproxy
+module github.com/dhananjayanxage/websocketproxy
 
 go 1.13
 
