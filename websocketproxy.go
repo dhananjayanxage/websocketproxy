@@ -25,6 +25,8 @@ var (
 	DefaultDialer = websocket.DefaultDialer
 )
 
+type InstructionKeyword = string
+
 // WebsocketProxy is an HTTP Handler that takes an incoming WebSocket
 // connection and proxies it to another server.
 type WebsocketProxy struct {
@@ -45,6 +47,15 @@ type WebsocketProxy struct {
 	//  Dialer contains options for connecting to the backend WebSocket server.
 	//  If nil, DefaultDialer is used.
 	Dialer *websocket.Dialer
+
+	// MessageParser is a custom function that we can pass to decide how to parse
+	// a message in websocket.
+	MessageParser func(message string) (bool, string)
+
+	// Logger need not necessarily be used for logging, this is a reaction to the
+	// message parsing done above. The websocket proxy posts a request clone
+	// to the channel when a parser detects a keyword
+	Logger map[InstructionKeyword]chan *http.Request
 }
 
 // ProxyHandler returns a new http.Handler interface that reverse proxies the
@@ -191,6 +202,8 @@ func (w *WebsocketProxy) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 				dst.WriteMessage(websocket.CloseMessage, m)
 				break
 			}
+			buffer := make([]byte, len(msg))
+			w.parseMessage(buffer, req)
 			err = dst.WriteMessage(msgType, msg)
 			if err != nil {
 				errc <- err
@@ -212,6 +225,16 @@ func (w *WebsocketProxy) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	}
 	if e, ok := err.(*websocket.CloseError); !ok || e.Code == websocket.CloseAbnormalClosure {
 		log.Printf(message, err)
+	}
+}
+
+func (w *WebsocketProxy) parseMessage(buffer []byte, r *http.Request) {
+	ok, keyword := w.MessageParser(string(buffer))
+	if ok {
+		cloneRequest := r.Clone(r.Context())
+		if loggerChan, ok := w.Logger[keyword]; ok {
+			loggerChan <- cloneRequest
+		}
 	}
 }
 
